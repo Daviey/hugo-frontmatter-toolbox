@@ -1,0 +1,25 @@
+run:
+  timeout: 5m
+linters:
+  enable:
+    - gofmt
+    - gosec
+    - errcheck
+    - unused
+    - staticcheck
+    - govet
+    - ineffassign
+    - typecheck
+    # Removed deprecated linters: deadcode, structcheck
+gosec:
+  severity: medium
+  confidence: medium
+  exclude:
+    - G104 # Ignoring harmless errors returned by some exec.Cmd calls
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-dirs:
+    - pkg
+    - vendor
