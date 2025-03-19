@@ -2,9 +2,10 @@
 package helpers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,23 +58,198 @@ func UnmarshalFrontmatter(delimiter string, data []byte) (map[string]interface{}
 
 // MarshalFrontmatter marshals frontmatter data based on the specified delimiter (---, +++, or {).
 func MarshalFrontmatter(delimiter string, front map[string]interface{}) ([]byte, error) {
+	// Make a copy of the map to avoid modifying the original
+	frontCopy := make(map[string]interface{})
+	for k, v := range front {
+		frontCopy[k] = v
+	}
+
 	switch delimiter {
 	case YamlDelimiter:
-		return yaml.Marshal(front)
-	case TomlDelimiter:
-		data, err := toml.Marshal(front)
-		if err != nil {
-			return nil, err
+		// For YAML, we'll create a custom ordered output to ensure consistent field order
+		var orderedYAML strings.Builder
+
+		// Define the order of frontmatter fields
+		orderedFields := []string{"title", "date", "draft", "series", "categories", "tags"}
+
+		// First, add the ordered fields if they exist
+		for _, field := range orderedFields {
+			if value, exists := frontCopy[field]; exists {
+				addYAMLField(&orderedYAML, field, value)
+				delete(frontCopy, field) // Remove so we don't add it again
+			}
 		}
-		// Post-process TOML arrays to be inline
-		re := regexp.MustCompile(`(?m)^(\s*\w+\s*=\s*)\[\s*\n(\s*)(.+?)\s*\n(\s*)]`)
-		processed := re.ReplaceAllString(string(data), "$1[$3]")
-		return []byte(processed), nil
+
+		// Now add any remaining fields in alphabetical order
+		var remainingFields []string
+		for field := range frontCopy {
+			remainingFields = append(remainingFields, field)
+		}
+		sort.Strings(remainingFields)
+
+		for _, field := range remainingFields {
+			addYAMLField(&orderedYAML, field, frontCopy[field])
+		}
+
+		return []byte(orderedYAML.String()), nil
+
+	case TomlDelimiter:
+		// For TOML, we'll build output with arrays explicitly formatted inline
+		var buf bytes.Buffer
+
+		// Sort keys for consistent output
+		var keys []string
+		for k := range frontCopy {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			value := frontCopy[key]
+
+			switch v := value.(type) {
+			case []string:
+				// Format string arrays inline
+				var parts []string
+				for _, s := range v {
+					parts = append(parts, fmt.Sprintf("%q", s))
+				}
+				fmt.Fprintf(&buf, "%s = [%s]\n", key, strings.Join(parts, ", "))
+
+			case []interface{}:
+				// Format interface arrays inline
+				var parts []string
+				for _, item := range v {
+					switch val := item.(type) {
+					case string:
+						parts = append(parts, fmt.Sprintf("%q", val))
+					default:
+						parts = append(parts, fmt.Sprintf("%v", val))
+					}
+				}
+				fmt.Fprintf(&buf, "%s = [%s]\n", key, strings.Join(parts, ", "))
+
+			case string:
+				fmt.Fprintf(&buf, "%s = %q\n", key, v)
+
+			case bool:
+				fmt.Fprintf(&buf, "%s = %t\n", key, v)
+
+			case int, int64, float64:
+				fmt.Fprintf(&buf, "%s = %v\n", key, v)
+
+			case time.Time:
+				fmt.Fprintf(&buf, "%s = %q\n", key, v.Format(time.RFC3339))
+
+			default:
+				// For complex types, use standard TOML marshaling
+				singleField := map[string]interface{}{key: value}
+				fieldData, err := toml.Marshal(singleField)
+				if err == nil {
+					// Clean up any multiline arrays in the output
+					fieldStr := string(fieldData)
+					fieldStr = strings.ReplaceAll(fieldStr, "[\n", "[")
+					fieldStr = strings.ReplaceAll(fieldStr, "\n]", "]")
+
+					// Clean up whitespace between array elements
+					fieldStr = strings.ReplaceAll(fieldStr, ",\n", ", ")
+
+					buf.WriteString(fieldStr)
+				} else {
+					// Fallback for unsupported types
+					fmt.Fprintf(&buf, "%s = %v\n", key, value)
+				}
+			}
+		}
+
+		return buf.Bytes(), nil
+
 	case JsonDelimiter:
-		return json.MarshalIndent(front, "", "  ")
+		return json.MarshalIndent(frontCopy, "", "  ")
+
 	default:
 		return nil, fmt.Errorf("unsupported frontmatter format: %s", delimiter)
 	}
+}
+
+// addYAMLField adds a field to the YAML builder with proper formatting
+func addYAMLField(builder *strings.Builder, field string, value interface{}) {
+	// Handle arrays specially for inline format
+	switch v := value.(type) {
+	case []interface{}, []string:
+		items := formatArrayItems(v)
+		builder.WriteString(fmt.Sprintf("%s: [%s]\n", field, strings.Join(items, ", ")))
+	default:
+		// For non-array values, use standard formatting
+		builder.WriteString(fmt.Sprintf("%s: %v\n", field, formatYAMLValue(value)))
+	}
+}
+
+// formatArrayItems converts array items to properly formatted strings
+func formatArrayItems(arr interface{}) []string {
+	var items []string
+
+	switch v := arr.(type) {
+	case []interface{}:
+		for _, item := range v {
+			items = append(items, formatYAMLValue(item))
+		}
+	case []string:
+		for _, item := range v {
+			// Quote string items
+			items = append(items, fmt.Sprintf("%q", item))
+		}
+	}
+
+	return items
+}
+
+// formatYAMLValue formats a value for YAML output
+func formatYAMLValue(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		// Check if string needs quotes
+		if needsQuotes(v) {
+			return fmt.Sprintf("%q", v)
+		}
+		return v
+	case bool, int, float64:
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// needsQuotes checks if a string needs quotes in YAML
+func needsQuotes(s string) bool {
+	// Add quotes if string contains special characters or could be interpreted as another type
+	if s == "" {
+		return true
+	}
+
+	// Check for common values that need quotes
+	if s == "true" || s == "false" || s == "yes" || s == "no" || s == "null" || s == "~" {
+		return true
+	}
+
+	// Check for numbers
+	if _, err := fmt.Sscanf(s, "%f", new(float64)); err == nil {
+		return true
+	}
+
+	// Check for special characters
+	for _, ch := range s {
+		if strings.ContainsRune("{}[]#&*!|>'\"%@`, ", ch) {
+			return true
+		}
+	}
+
+	// Check if string starts with special characters
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, ":") || strings.HasPrefix(s, "?") {
+		return true
+	}
+
+	return false
 }
 
 // ParseSet parses a string in the format "key=value" and returns the key and value as a string and interface{}.

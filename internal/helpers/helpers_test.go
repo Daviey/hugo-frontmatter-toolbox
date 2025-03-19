@@ -266,3 +266,97 @@ func TestTomlArrayFormat(t *testing.T) {
 		t.Errorf("TOML array should be on a single line, got multi-line format: %s", content)
 	}
 }
+
+// TestYamlArrayFormat tests that YAML arrays are correctly preserved in inline format.
+func TestYamlArrayFormat(t *testing.T) {
+	// Test case with array values
+	frontmatter := map[string]interface{}{
+		"title":      "Test Post",
+		"date":       "2023-04-03",
+		"draft":      false,
+		"tags":       []string{"tag1", "tag2", "tag3"},
+		"categories": []string{"cat1", "cat2", "cat3"},
+	}
+
+	// Marshal using YAML delimiter
+	yamlData, err := MarshalFrontmatter(YamlDelimiter, frontmatter)
+	if err != nil {
+		t.Fatalf("Failed to marshal YAML: %v", err)
+	}
+
+	// Test the output
+	yamlStr := string(yamlData)
+	t.Logf("YAML output: %s", yamlStr)
+
+	// Check that arrays are inline format
+	if !strings.Contains(yamlStr, "tags: [") {
+		t.Errorf("YAML tags should be in inline format, got: %s", yamlStr)
+	}
+	if !strings.Contains(yamlStr, "categories: [") {
+		t.Errorf("YAML categories should be in inline format, got: %s", yamlStr)
+	}
+
+	// Test with multi-line YAML format to see if it converts to inline
+	yamlWithBlockArrays := `title: Test Post
+date: 2023-04-03
+draft: false
+tags:
+  - tag1
+  - tag2
+  - tag3
+categories:
+  - cat1
+  - cat2
+  - cat3
+`
+
+	// First unmarshal the YAML to get the map
+	var blockFrontmatter map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlWithBlockArrays), &blockFrontmatter)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal block YAML: %v", err)
+	}
+
+	// Then marshal it with our function
+	convertedData, err := MarshalFrontmatter(YamlDelimiter, blockFrontmatter)
+	if err != nil {
+		t.Fatalf("Failed to marshal converted YAML: %v", err)
+	}
+
+	// Check the output
+	convertedStr := string(convertedData)
+	t.Logf("Converted YAML: %s", convertedStr)
+
+	// Verify arrays are now inline
+	if !strings.Contains(convertedStr, "tags: [") {
+		t.Errorf("Converted YAML tags should be inline, got: %s", convertedStr)
+	}
+	if !strings.Contains(convertedStr, "categories: [") {
+		t.Errorf("Converted YAML categories should be inline, got: %s", convertedStr)
+	}
+
+	// One more test with real-world example data
+	realWorldFrontmatter := map[string]interface{}{
+		"title":      "Bash: The Swiss Army Knife for Security Professionals",
+		"date":       "2023-04-03",
+		"draft":      false,
+		"tags":       []string{"bash", "cybersecurity", "linux", "penetration testing", "covert channels", "red team", "blue team"},
+		"categories": []string{"security", "offensive security", "defensive security"},
+	}
+
+	realWorldData, err := MarshalFrontmatter(YamlDelimiter, realWorldFrontmatter)
+	if err != nil {
+		t.Fatalf("Failed to marshal real-world YAML: %v", err)
+	}
+
+	realWorldStr := string(realWorldData)
+	t.Logf("Real-world YAML: %s", realWorldStr)
+
+	// Check for inline arrays
+	if !strings.Contains(realWorldStr, "tags: [") {
+		t.Errorf("Real-world YAML tags should be inline, got: %s", realWorldStr)
+	}
+	if !strings.Contains(realWorldStr, "categories: [") {
+		t.Errorf("Real-world YAML categories should be inline, got: %s", realWorldStr)
+	}
+}

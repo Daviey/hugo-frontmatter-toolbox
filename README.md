@@ -3,7 +3,7 @@
 
 # hugo-frontmatter-toolbox
 
-![Test Coverage](https://img.shields.io/badge/coverage-46.8%25-orange)
+![Test Coverage](https://img.shields.io/badge/coverage-47.5%25-orange)
 
 A CLI tool for batch editing Hugo frontmatter (YAML, TOML, JSON).
 
